@@ -77,6 +77,20 @@
   }
   button:disabled { opacity: 0.4; cursor: default; }
   #info { font-size: 13px; color: var(--muted); min-height: 18px; }
+  #stats {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 13px;
+  }
+  #stats[hidden] { display: none; }
+  #stats div { display: flex; justify-content: space-between; gap: 8px; }
+  #stats span { color: var(--muted); flex-shrink: 0; }
+  #stats b { font-weight: 600; text-align: right; }
   #legend { display: flex; flex-direction: column; gap: 5px; max-height: 260px; overflow-y: auto; }
   #legend h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
   .swatch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -178,6 +192,12 @@
     <label class="check"><input type="checkbox" id="gridLines" checked> Show grid lines</label>
 
     <button id="downloadBtn" disabled>Download PNG</button>
+    <div id="stats" hidden>
+      <div><span>Photo size</span><b id="stPhoto"></b></div>
+      <div><span>Pixel grid</span><b id="stGrid"></b></div>
+      <div><span>Colors</span><b id="stColors"></b></div>
+      <div id="stPaperRow"><span>On paper</span><b id="stPaper"></b></div>
+    </div>
     <div id="info"></div>
     <div id="legend"></div>
 
@@ -480,12 +500,18 @@ function render() {
   }
 
   if (lines) {
-    ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = 0; x <= gridW; x++) { ctx.moveTo(x * CELL + 0.5, 0); ctx.lineTo(x * CELL + 0.5, gridH * CELL); }
-    for (let y = 0; y <= gridH; y++) { ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(gridW * CELL, y * CELL + 0.5); }
-    ctx.stroke();
+    // thick opaque lines (10% of a block) so every boundary stays visible
+    // at any zoom level; mid-gray reads on both dark and light blocks
+    const lw = Math.max(2, Math.round(CELL * 0.1));
+    ctx.fillStyle = "#909090";
+    for (let x = 0; x <= gridW; x++) {
+      const px = x === 0 ? 0 : x === gridW ? gridW * CELL - lw : x * CELL - lw / 2;
+      ctx.fillRect(px, 0, lw, gridH * CELL);
+    }
+    for (let y = 0; y <= gridH; y++) {
+      const py = y === 0 ? 0 : y === gridH ? gridH * CELL - lw : y * CELL - lw / 2;
+      ctx.fillRect(0, py, gridW * CELL, lw);
+    }
   }
 
   if (numbered) {
@@ -506,8 +532,13 @@ function render() {
   outCanvas.style.display = "block";
   downloadBtn.disabled = false;
   const paper = paperInfo(gridW, gridH);
-  infoEl.textContent = gridW + " × " + gridH + " blocks · " + palette.length + " colors" +
-    (paper ? " · " + paper.text : "");
+  infoEl.textContent = "";
+  document.getElementById("stats").hidden = false;
+  document.getElementById("stPhoto").textContent = iw + " × " + ih + " px";
+  document.getElementById("stGrid").textContent = gridW + " × " + gridH + " blocks";
+  document.getElementById("stColors").textContent = palette.length;
+  document.getElementById("stPaperRow").style.display = paper ? "" : "none";
+  if (paper) document.getElementById("stPaper").textContent = paper.text;
 
   legendEl.innerHTML = "<h3>Color legend</h3>";
   palette.forEach((p, i) => {
