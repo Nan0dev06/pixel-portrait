@@ -125,6 +125,17 @@
   .viewer-bar { display: flex; align-items: center; gap: 10px; }
   .viewer-bar span { flex: 1; font-size: 13px; color: var(--muted); word-break: break-all; }
   .viewer-bar button { padding: 8px 14px; font-size: 13px; }
+  #wizard { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 20; }
+  #wizard[hidden] { display: none; }
+  .wiz-box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 400px; max-width: 92vw; display: flex; flex-direction: column; gap: 14px; }
+  .wiz-box h2 { margin: 0; font-size: 17px; }
+  .wiz-box p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .wiz-row { display: flex; gap: 10px; }
+  .wiz-row button { flex: 1; }
+  .wiz-box .field { font-size: 13px; color: var(--muted); }
+  .wiz-box input[type=number], .wiz-box select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 14px; width: 100%; margin-top: 6px; }
+  .wiz-mini { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+  .wiz-mini input { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -140,9 +151,10 @@
     </div>
     <input type="file" id="fileInput" accept="image/*">
 
-    <label class="field">Grid width (blocks across) <span class="value" id="gridVal">40</span>
+    <label class="field" id="gridField">Grid width (blocks across) <span class="value" id="gridVal">40</span>
       <input type="range" id="gridSize" min="10" max="120" value="40">
     </label>
+    <button id="setupBtn" class="secondary">Redo setup questions</button>
 
     <label class="field">Number of colors <span class="value" id="colorsVal">12</span>
       <input type="range" id="numColors" min="2" max="40" value="12">
@@ -180,6 +192,56 @@
     <canvas id="outCanvas"></canvas>
   </div>
 </main>
+
+<div id="wizard" hidden>
+  <div class="wiz-box">
+    <div id="wizStep1">
+      <h2>Before you start</h2>
+      <p>Do you already have predefined measurements for your paper?</p>
+      <div class="wiz-row">
+        <button id="wizYes">Yes, I do</button>
+        <button id="wizNo" class="secondary">No — just start</button>
+      </div>
+    </div>
+    <div id="wizStep2" hidden>
+      <h2>Your paper</h2>
+      <p>Is the grid already drawn on the paper (pre-pixelated), or is it blank?</p>
+      <div class="wiz-row">
+        <button id="wizPreGrid">Grid already on paper</button>
+        <button id="wizBlank">Blank paper</button>
+      </div>
+    </div>
+    <div id="wizStep3" hidden>
+      <h2 id="wizStep3Title"></h2>
+      <label class="field">Paper size
+        <select id="wizPaper">
+          <option value="210x297" selected>A4 (210 × 297 mm)</option>
+          <option value="148x210">Half A4 / A5 (148 × 210 mm)</option>
+          <option value="297x420">A3 (297 × 420 mm)</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <div id="wizCustom" class="wiz-mini" hidden>
+        <input type="number" id="wizPW" min="10" max="2000" value="210"> ×
+        <input type="number" id="wizPH" min="10" max="2000" value="297"> mm
+      </div>
+      <label class="field" id="wizBlockField">Square (block) size on the paper, in mm
+        <input type="number" id="wizBlock" min="1" max="100" step="0.5" value="5">
+      </label>
+      <div id="wizGridField" hidden>
+        <span class="field">Blocks on the paper (not the photo's pixels)</span>
+        <div class="wiz-mini" style="margin-top:6px">
+          <input type="number" id="wizCols" min="2" max="300" value="40"> across ×
+          <input type="number" id="wizRows" min="2" max="300" value="50"> down
+        </div>
+      </div>
+      <div class="wiz-row">
+        <button id="wizBack" class="secondary">Back</button>
+        <button id="wizStart">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="viewer" hidden>
   <div class="viewer-box">
@@ -256,28 +318,56 @@ const paperH = document.getElementById("paperH");
   })
 );
 
+// setup mode chosen in the wizard:
+//   "usual"     - free grid slider, paper only for measurements
+//   "blockSize" - block mm known, blank paper: blocks-across computed from paper
+//   "preGrid"   - paper already ruled: grid is exactly cols × rows
+let mode = "usual", blockMM = null, gridCols = null, gridRows = null;
+
+function parsePaper() {
+  const v = paperEl.value;
+  if (!v) return null;
+  if (v === "custom") {
+    const w = +paperW.value, h = +paperH.value;
+    if (!w || !h) return null;
+    return { w, h, label: w + " × " + h + " mm" };
+  }
+  const [w, h] = v.split("x").map(Number);
+  return { w, h, label: paperEl.options[paperEl.selectedIndex].text };
+}
+
 // physical size of one block when the grid is fit onto the chosen paper,
 // rotating the paper to match the image orientation
 function paperInfo(gridW, gridH) {
-  const v = paperEl.value;
-  if (!v) return null;
-  let w, h, label;
-  if (v === "custom") {
-    w = +paperW.value; h = +paperH.value;
-    if (!w || !h) return null;
-    label = w + " × " + h + " mm";
-  } else {
-    [w, h] = v.split("x").map(Number);
-    label = paperEl.options[paperEl.selectedIndex].text;
-  }
+  const p = parsePaper();
+  if (!p) return null;
+  let { w, h } = p;
   if ((gridW > gridH) !== (w > h)) [w, h] = [h, w];
-  const block = Math.min(w / gridW, h / gridH);
   const r1 = n => Math.round(n * 10) / 10;
+  const block = mode === "blockSize" && blockMM ? blockMM : Math.min(w / gridW, h / gridH);
   return {
     block: r1(block),
     text: "block " + r1(block) + " mm · drawing " + Math.round(block * gridW) +
-      " × " + Math.round(block * gridH) + " mm · " + label
+      " × " + Math.round(block * gridH) + " mm · " + p.label
   };
+}
+
+// grid dimensions for the current mode; falls back to the slider
+function gridDims() {
+  const iw = sourceImg.naturalWidth, ih = sourceImg.naturalHeight;
+  const p = parsePaper();
+  if (mode === "preGrid" && gridCols && gridRows) {
+    return { gridW: gridCols, gridH: gridRows };
+  }
+  if (mode === "blockSize" && blockMM && p) {
+    let pw = p.w, ph = p.h;
+    if ((iw > ih) !== (pw > ph)) [pw, ph] = [ph, pw];
+    const gridW = Math.max(2, Math.floor(pw / blockMM));
+    const maxRows = Math.max(2, Math.floor(ph / blockMM));
+    return { gridW, gridH: Math.min(Math.max(1, Math.round(gridW * ih / iw)), maxRows) };
+  }
+  const gridW = +gridSizeEl.value;
+  return { gridW, gridH: Math.max(1, Math.round(gridW * ih / iw)) };
 }
 
 // ---------- color quantization (median cut) ----------
@@ -335,8 +425,11 @@ const toHex = c => "#" + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, "0"
 function render() {
   if (!sourceImg) return;
 
-  const gridW = +gridSizeEl.value;
-  const gridH = Math.max(1, Math.round(gridW * sourceImg.naturalHeight / sourceImg.naturalWidth));
+  if (mode !== "usual" && !parsePaper()) {
+    mode = "usual"; // paper was set to "None" — measurements no longer apply
+    document.getElementById("gridField").style.display = "";
+  }
+  const { gridW, gridH } = gridDims();
   const k = +numColorsEl.value;
 
   // 1. Downscale: each grid cell = average color of that photo area (white under transparency)
@@ -345,7 +438,12 @@ function render() {
   const sctx = small.getContext("2d", { willReadFrequently: true });
   sctx.fillStyle = "#fff";
   sctx.fillRect(0, 0, gridW, gridH);
-  sctx.drawImage(sourceImg, 0, 0, gridW, gridH);
+  // center-crop the photo to the grid's shape so fixed paper grids never distort it
+  const iw = sourceImg.naturalWidth, ih = sourceImg.naturalHeight;
+  let sx = 0, sy = 0, sw = iw, sh = ih;
+  if (iw / ih > gridW / gridH) { sw = ih * gridW / gridH; sx = (iw - sw) / 2; }
+  else { sh = iw * gridH / gridW; sy = (ih - sh) / 2; }
+  sctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, gridW, gridH);
   const data = sctx.getImageData(0, 0, gridW, gridH).data;
 
   const cells = [];
@@ -653,6 +751,74 @@ async function initHistory() {
   refreshGallery();
 }
 initHistory();
+
+// ---------- setup wizard ----------
+
+const wizard = document.getElementById("wizard");
+let wizChoice = "blank"; // or "preGrid"
+
+function wizShow(step) {
+  ["wizStep1", "wizStep2", "wizStep3"].forEach(id =>
+    document.getElementById(id).hidden = id !== step);
+  wizard.hidden = false;
+}
+
+document.getElementById("wizYes").addEventListener("click", () => wizShow("wizStep2"));
+document.getElementById("wizNo").addEventListener("click", () => {
+  mode = "usual";
+  document.getElementById("gridField").style.display = "";
+  wizard.hidden = true;
+  render();
+});
+
+function prepStep3(choice) {
+  wizChoice = choice;
+  const pre = choice === "preGrid";
+  document.getElementById("wizStep3Title").textContent =
+    pre ? "Grid already on the paper" : "Blank paper, known measurements";
+  document.getElementById("wizBlockField").hidden = pre;
+  document.getElementById("wizGridField").hidden = !pre;
+  wizShow("wizStep3");
+}
+document.getElementById("wizBlank").addEventListener("click", () => prepStep3("blank"));
+document.getElementById("wizPreGrid").addEventListener("click", () => prepStep3("preGrid"));
+
+document.getElementById("wizPaper").addEventListener("input", e => {
+  document.getElementById("wizCustom").hidden = e.target.value !== "custom";
+});
+document.getElementById("wizBack").addEventListener("click", () => wizShow("wizStep2"));
+
+document.getElementById("wizStart").addEventListener("click", () => {
+  // copy the paper choice into the main controls
+  const wp = document.getElementById("wizPaper").value;
+  paperEl.value = wp;
+  if (wp === "custom") {
+    paperW.value = document.getElementById("wizPW").value;
+    paperH.value = document.getElementById("wizPH").value;
+  }
+  document.getElementById("customPaper").hidden = wp !== "custom";
+  if (!parsePaper()) return;
+
+  if (wizChoice === "preGrid") {
+    const cols = +document.getElementById("wizCols").value;
+    const rows = +document.getElementById("wizRows").value;
+    if (!(cols >= 2 && rows >= 2)) return;
+    gridCols = Math.round(cols);
+    gridRows = Math.round(rows);
+    mode = "preGrid";
+  } else {
+    const b = +document.getElementById("wizBlock").value;
+    if (!(b > 0)) return;
+    blockMM = b;
+    mode = "blockSize";
+  }
+  document.getElementById("gridField").style.display = "none";
+  wizard.hidden = true;
+  render();
+});
+
+document.getElementById("setupBtn").addEventListener("click", () => wizShow("wizStep1"));
+wizShow("wizStep1"); // ask on every visit
 </script>
 </body>
 </html>
