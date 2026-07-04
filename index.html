@@ -95,7 +95,15 @@
     justify-content: center;
     min-height: 70vh;
   }
-  #outCanvas { max-width: 100%; max-height: 82vh; image-rendering: pixelated; display: none; }
+  #outCanvas { max-width: 100%; max-height: 82vh; display: none; }
+  select, #customPaper input {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; font-size: 13px; width: 100%; margin-top: 6px;
+  }
+  #customPaper { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  #customPaper[hidden] { display: none; }
+  #customPaper input { margin-top: 0; }
   #placeholder { color: var(--muted); font-size: 15px; text-align: center; line-height: 1.7; }
   h3.sec { margin: 4px 0 0; font-size: 13px; color: var(--muted); font-weight: 600; }
   button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; font-size: 13px; padding: 8px; }
@@ -139,6 +147,20 @@
     <label class="field">Number of colors <span class="value" id="colorsVal">12</span>
       <input type="range" id="numColors" min="2" max="40" value="12">
     </label>
+
+    <label class="field">Paper size
+      <select id="paper">
+        <option value="210x297" selected>A4 (210 × 297 mm)</option>
+        <option value="148x210">Half A4 / A5 (148 × 210 mm)</option>
+        <option value="297x420">A3 (297 × 420 mm)</option>
+        <option value="custom">Custom…</option>
+        <option value="">None (screen only)</option>
+      </select>
+    </label>
+    <div id="customPaper" hidden>
+      <input type="number" id="paperW" min="10" max="2000" value="210" placeholder="width"> ×
+      <input type="number" id="paperH" min="10" max="2000" value="297" placeholder="height"> mm
+    </div>
 
     <label class="check"><input type="checkbox" id="numbered" checked> Number each block</label>
     <label class="check"><input type="checkbox" id="gridLines" checked> Show grid lines</label>
@@ -221,13 +243,42 @@ dropzone.addEventListener("drop", e => {
   handleFile(e.dataTransfer.files[0]);
 });
 
-[gridSizeEl, numColorsEl, numberedEl, gridLinesEl].forEach(el =>
+const paperEl = document.getElementById("paper");
+const paperW = document.getElementById("paperW");
+const paperH = document.getElementById("paperH");
+
+[gridSizeEl, numColorsEl, numberedEl, gridLinesEl, paperEl, paperW, paperH].forEach(el =>
   el.addEventListener("input", () => {
     document.getElementById("gridVal").textContent = gridSizeEl.value;
     document.getElementById("colorsVal").textContent = numColorsEl.value;
+    document.getElementById("customPaper").hidden = paperEl.value !== "custom";
     render();
   })
 );
+
+// physical size of one block when the grid is fit onto the chosen paper,
+// rotating the paper to match the image orientation
+function paperInfo(gridW, gridH) {
+  const v = paperEl.value;
+  if (!v) return null;
+  let w, h, label;
+  if (v === "custom") {
+    w = +paperW.value; h = +paperH.value;
+    if (!w || !h) return null;
+    label = w + " × " + h + " mm";
+  } else {
+    [w, h] = v.split("x").map(Number);
+    label = paperEl.options[paperEl.selectedIndex].text;
+  }
+  if ((gridW > gridH) !== (w > h)) [w, h] = [h, w];
+  const block = Math.min(w / gridW, h / gridH);
+  const r1 = n => Math.round(n * 10) / 10;
+  return {
+    block: r1(block),
+    text: "block " + r1(block) + " mm · drawing " + Math.round(block * gridW) +
+      " × " + Math.round(block * gridH) + " mm · " + label
+  };
+}
 
 // ---------- color quantization (median cut) ----------
 
@@ -356,7 +407,9 @@ function render() {
   placeholder.style.display = "none";
   outCanvas.style.display = "block";
   downloadBtn.disabled = false;
-  infoEl.textContent = gridW + " × " + gridH + " blocks · " + palette.length + " colors";
+  const paper = paperInfo(gridW, gridH);
+  infoEl.textContent = gridW + " × " + gridH + " blocks · " + palette.length + " colors" +
+    (paper ? " · " + paper.text : "");
 
   legendEl.innerHTML = "<h3>Color legend</h3>";
   palette.forEach((p, i) => {
@@ -374,8 +427,11 @@ window.render = render;
 
 downloadBtn.addEventListener("click", () => {
   const numbered = numberedEl.checked;
+  const gridW = outCanvas.width / CELL, gridH = outCanvas.height / CELL;
+  const paper = paperInfo(gridW, gridH);
   const legendRow = 52, legendPad = 16;
-  const legendH = numbered ? legendPad * 2 + palette.length * legendRow : 0;
+  const paperH2 = paper ? 44 : 0;
+  const legendH = (numbered ? legendPad * 2 + palette.length * legendRow : 0) + paperH2;
 
   const dl = document.createElement("canvas");
   dl.width = outCanvas.width;
@@ -383,12 +439,22 @@ downloadBtn.addEventListener("click", () => {
   const ctx = dl.getContext("2d");
   ctx.drawImage(outCanvas, 0, 0);
 
-  if (numbered) {
+  if (legendH) {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, outCanvas.height, dl.width, legendH);
     ctx.textBaseline = "middle";
+  }
+
+  if (paper) {
+    ctx.fillStyle = "#222";
+    ctx.font = "600 22px Consolas, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(paper.text, 24, outCanvas.height + paperH2 / 2);
+  }
+
+  if (numbered) {
     palette.forEach((p, i) => {
-      const y = outCanvas.height + legendPad + i * legendRow + legendRow / 2;
+      const y = outCanvas.height + paperH2 + legendPad + i * legendRow + legendRow / 2;
       ctx.font = "600 24px Consolas, monospace";
       ctx.fillStyle = "#222";
       ctx.textAlign = "right";
