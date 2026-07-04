@@ -150,6 +150,20 @@
   .wiz-box input[type=number], .wiz-box select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 14px; width: 100%; margin-top: 6px; }
   .wiz-mini { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
   .wiz-mini input { margin-top: 0; }
+  #recBox {
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  #recBox[hidden] { display: none; }
+  #recBox .rec-title { color: var(--accent); font-weight: 600; }
+  #wizRecHint { color: var(--accent); font-size: 12.5px; line-height: 1.4; }
+  #wizRecHint[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -164,6 +178,15 @@
       click here or drag &amp; drop an image
     </div>
     <input type="file" id="fileInput" accept="image/*">
+
+    <div id="recBox" hidden>
+      <div class="rec-title">Recommended for this photo</div>
+      <div id="recText"></div>
+      <div class="wiz-row">
+        <button id="recApply">Use this</button>
+        <button id="recDismiss" class="secondary">Keep mine</button>
+      </div>
+    </div>
 
     <label class="field" id="gridField">Grid width (blocks across) <span class="value" id="gridVal">40</span>
       <input type="range" id="gridSize" min="10" max="120" value="40">
@@ -247,6 +270,7 @@
       </div>
       <label class="field" id="wizBlockField">Square (block) size on the paper, in mm
         <input type="number" id="wizBlock" min="1" max="100" step="0.5" value="5">
+        <div id="wizRecHint" hidden></div>
       </label>
       <div id="wizGridField" hidden>
         <span class="field">Blocks on the paper (not the photo's pixels)</span>
@@ -302,6 +326,7 @@ function loadFromSrc(src, name) {
     sourceImg = img;
     dropzone.innerHTML = "<strong>" + (name || "Image loaded") + "</strong>click to choose a different photo";
     render();
+    maybeRecommend();
   };
   img.onerror = () => { infoEl.textContent = "Could not read that file as an image."; };
   img.src = src;
@@ -810,6 +835,7 @@ function prepStep3(choice) {
   document.getElementById("wizBlockField").hidden = pre;
   document.getElementById("wizGridField").hidden = !pre;
   wizShow("wizStep3");
+  updateWizHint();
 }
 document.getElementById("wizBlank").addEventListener("click", () => prepStep3("blank"));
 document.getElementById("wizPreGrid").addEventListener("click", () => prepStep3("preGrid"));
@@ -846,9 +872,71 @@ document.getElementById("wizStart").addEventListener("click", () => {
   document.getElementById("gridField").style.display = "none";
   wizard.hidden = true;
   render();
+  maybeRecommend();
 });
 
 document.getElementById("setupBtn").addEventListener("click", () => wizShow("wizStep1"));
+
+// ---------- measurement recommendation ----------
+// each block should average >=3 photo pixels (finer keeps no extra quality),
+// blocks under 3 mm are hard to hand-draw, and past ~64 blocks across the
+// work grows without visible gain
+function recommend(paper) {
+  if (!sourceImg || !paper) return null;
+  const iw = sourceImg.naturalWidth, ih = sourceImg.naturalHeight;
+  let pw = paper.w, ph = paper.h;
+  if ((iw > ih) !== (pw > ph)) [pw, ph] = [ph, pw];
+  const maxFromImage = Math.floor(iw / 3);
+  const maxFromPaper = Math.floor(pw / 3);
+  const targetCols = Math.max(12, Math.min(maxFromImage, maxFromPaper, 64));
+  const block = Math.max(3, Math.round((pw / targetCols) * 2) / 2); // nearest 0.5 mm
+  const cols = Math.floor(pw / block);
+  const rows = Math.min(Math.max(1, Math.round(cols * ih / iw)), Math.floor(ph / block));
+  return {
+    block, cols, rows,
+    text: "Your photo is " + iw + " × " + ih + " px. On " + paper.label + ", " +
+      block + " mm squares give " + cols + " × " + rows + " blocks — keeps the detail " +
+      "the photo actually has, without blocks too small to draw."
+  };
+}
+
+const recBox = document.getElementById("recBox");
+function maybeRecommend() {
+  if (mode !== "blockSize") { recBox.hidden = true; return; }
+  const rec = recommend(parsePaper());
+  if (!rec || rec.block === blockMM) { recBox.hidden = true; return; }
+  document.getElementById("recText").textContent = rec.text;
+  recBox.dataset.block = rec.block;
+  recBox.hidden = false;
+}
+document.getElementById("recApply").addEventListener("click", () => {
+  blockMM = +recBox.dataset.block;
+  recBox.hidden = true;
+  render();
+});
+document.getElementById("recDismiss").addEventListener("click", () => { recBox.hidden = true; });
+
+// prefill the wizard's block-size input when a photo is already loaded
+function parseWizPaper() {
+  const sel = document.getElementById("wizPaper");
+  if (sel.value === "custom") {
+    const w = +document.getElementById("wizPW").value, h = +document.getElementById("wizPH").value;
+    return (w && h) ? { w, h, label: w + " × " + h + " mm" } : null;
+  }
+  const [w, h] = sel.value.split("x").map(Number);
+  return { w, h, label: sel.options[sel.selectedIndex].text };
+}
+function updateWizHint() {
+  const hint = document.getElementById("wizRecHint");
+  const rec = wizChoice === "blank" ? recommend(parseWizPaper()) : null;
+  if (!rec) { hint.hidden = true; return; }
+  document.getElementById("wizBlock").value = rec.block;
+  hint.textContent = "Recommended for your photo: " + rec.block + " mm → " + rec.cols + " × " + rec.rows + " blocks";
+  hint.hidden = false;
+}
+["wizPaper", "wizPW", "wizPH"].forEach(id =>
+  document.getElementById(id).addEventListener("input", updateWizHint));
+
 wizShow("wizStep1"); // ask on every visit
 </script>
 </body>
