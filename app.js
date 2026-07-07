@@ -41,12 +41,35 @@ function handleFile(file) {
 
 dropzone.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => handleFile(fileInput.files[0]));
-dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("over"); });
-dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));
-dropzone.addEventListener("drop", e => {
+
+// full-window drag & drop: a photo can be dropped anywhere on the page.
+// a depth counter keeps the overlay stable across nested dragenter/dragleave.
+const dropOverlay = document.getElementById("dropOverlay");
+let dragDepth = 0;
+const dragHasFiles = e => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes("Files");
+
+window.addEventListener("dragenter", e => {
+  if (!dragHasFiles(e)) return;
   e.preventDefault();
-  dropzone.classList.remove("over");
-  handleFile(e.dataTransfer.files[0]);
+  dragDepth++;
+  dropOverlay.hidden = false;
+});
+window.addEventListener("dragover", e => {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", e => {
+  if (!dragHasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dropOverlay.hidden = true;
+});
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropOverlay.hidden = true;
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) handleFile(file);
 });
 
 const paperEl = document.getElementById("paper");
